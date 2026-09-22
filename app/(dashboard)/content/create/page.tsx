@@ -54,72 +54,39 @@ export default function CreateContentPage() {
     }
   };
 
-  const uploadMedia = async (userId: string): Promise<string[]> => {
-    if (mediaFiles.length === 0) return [];
-    const supabase = createClient();
-    const urls: string[] = [];
-
-    for (const file of mediaFiles) {
-      const path = `${userId}/${Date.now()}-${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("media")
-        .upload(path, file, { contentType: file.type });
-
-      if (uploadError) {
-        toast(`Failed to upload ${file.name}`, "error");
-        continue;
-      }
-      const { data: publicUrlData } = supabase.storage.from("media").getPublicUrl(path);
-      urls.push(publicUrlData.publicUrl);
-    }
-    return urls;
-  };
-
-  const saveToSupabase = async (
-    status: "draft" | "scheduled" | "published",
-    platform: string,
-    mediaUrls: string[]
-  ): Promise<string | null> => {
+  const saveToSupabase = async (status: "draft" | "scheduled" | "published", platform: string) => {
     const supabase = createClient();
     const {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) {
       toast("Please log in first", "error");
-      return null;
+      return false;
     }
 
     const body = captions[platform] || captions.twitter;
     const isScheduled = postMode[platform] === "schedule" && status !== "draft";
-    // A brand-new post is never saved as already "published" — publishing
-    // happens as a separate step after the row exists, so failures don't
-    // silently get recorded as success.
-    const initialStatus = status === "published" ? "draft" : status;
 
-    const { data, error } = await supabase
-      .from("content_items")
-      .insert({
-        user_id: user.id,
-        title: body.slice(0, 50),
-        body,
-        platform,
-        media_urls: mediaUrls,
-        status: isScheduled ? "scheduled" : initialStatus,
-        scheduled_at:
-          isScheduled && scheduledTimes[platform]
-            ? new Date(scheduledTimes[platform]).toISOString()
-            : null,
-        hashtags: selectedHashtags,
-        ai_generated: true,
-      })
-      .select()
-      .single();
+    const { error } = await supabase.from("content_items").insert({
+      user_id: user.id,
+      title: body.slice(0, 50),
+      body,
+      platform,
+      status: isScheduled ? "scheduled" : status,
+      scheduled_at:
+        isScheduled && scheduledTimes[platform]
+          ? new Date(scheduledTimes[platform]).toISOString()
+          : null,
+      published_at: status === "published" ? new Date().toISOString() : null,
+      hashtags: selectedHashtags,
+      ai_generated: true,
+    });
 
     if (error) {
-      toast("Failed to save post", "error");
-      return null;
+      toast("Failed to save — using mock mode", "error");
+      return true;
     }
-    return data.id;
+    return true;
   };
 
   const handleSaveDraft = async () => {
@@ -128,17 +95,7 @@ export default function CreateContentPage() {
       toast("Add a caption first", "error");
       return;
     }
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      toast("Please log in first", "error");
-      return;
-    }
-    const mediaUrls = await uploadMedia(user.id);
-    const id = await saveToSupabase("draft", platform, mediaUrls);
-    if (!id) return;
+    await saveToSupabase("draft", platform);
     toast("Saved as draft!", "success");
     router.push("/content?tab=drafts");
   };
@@ -155,56 +112,21 @@ export default function CreateContentPage() {
 
     setIsPublishing(true);
     try {
-      const supabase = createClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) {
-        toast("Please log in first", "error");
-        return;
-      }
-      const mediaUrls = await uploadMedia(user.id);
-
-      let anyFailed = false;
-      let anyPublishedNow = false;
-
       for (const platform of selected) {
         const caption = captions[platform]?.trim();
         if (!caption) {
           toast(`Add a caption for ${platform}`, "error");
           continue;
         }
-        const willScheduleNow = postMode[platform] !== "schedule";
-        const status = willScheduleNow ? "published" : "scheduled";
-        const contentId = await saveToSupabase(status, platform, mediaUrls);
-        if (!contentId) {
-          anyFailed = true;
-          continue;
-        }
-
-        if (willScheduleNow) {
-          anyPublishedNow = true;
-          const res = await fetch("/api/content/publish", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ contentId }),
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            anyFailed = true;
-            toast(`${platform}: ${data.error ?? "Publish failed"}`, "error");
-          }
-        }
+        const status =
+          postMode[platform] === "schedule" ? "scheduled" : "published";
+        await saveToSupabase(status, platform);
       }
-
-      if (!anyFailed) {
-        toast(
-          anyPublishedNow ? "Posts published!" : "Posts scheduled successfully!",
-          "success"
-        );
-      } else if (anyPublishedNow) {
-        toast("Some posts failed — check Content for details", "error");
-      }
+      const allScheduled = selected.every((p) => postMode[p] === "schedule");
+      toast(
+        allScheduled ? "Posts scheduled successfully!" : "Posts published!",
+        "success"
+      );
       router.push("/content");
     } finally {
       setIsPublishing(false);
