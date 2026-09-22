@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   buildTextPrompt,
   buildVisionPrompt,
-  callGeminiText,
-  callGeminiVision,
-  formatGeminiError,
+  callGroqText,
+  callGroqVision,
+  formatGroqError,
   getFallbackResponse,
-  parseGeminiResponse,
+  parseGroqResponse,
 } from "@/lib/gemini/caption";
 
 export async function POST(req: NextRequest) {
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
       platforms = body.platforms || ["twitter", "linkedin", "instagram"];
     }
 
-    const apiKey = process.env.GEMINI_API_KEY?.trim();
+    const apiKey = process.env.GROQ_API_KEY?.trim();
 
     if (!apiKey) {
       return NextResponse.json(getFallbackResponse());
@@ -51,12 +51,12 @@ export async function POST(req: NextRequest) {
       const prompt = buildVisionPrompt(tone, platforms);
 
       try {
-        const rawText = await callGeminiVision(apiKey, base64, mimeType, prompt);
-        const parsed = parseGeminiResponse(rawText);
+        const rawText = await callGroqVision(apiKey, base64, mimeType, prompt);
+        const parsed = parseGroqResponse(rawText);
         return NextResponse.json(parsed);
       } catch (err) {
-        console.error("Gemini vision error:", err);
-        const message = formatGeminiError(err);
+        console.error("Groq vision error:", err);
+        const message = formatGroqError(err);
         return NextResponse.json(
           { error: message, _apiError: true },
           { status: 502 }
@@ -67,12 +67,12 @@ export async function POST(req: NextRequest) {
     if (manualPrompt) {
       const prompt = buildTextPrompt(manualPrompt, tone, platforms);
       try {
-        const rawText = await callGeminiText(apiKey, prompt);
-        const parsed = parseGeminiResponse(rawText);
+        const rawText = await callGroqText(apiKey, prompt);
+        const parsed = parseGroqResponse(rawText);
         return NextResponse.json(parsed);
       } catch (err) {
-        console.error("Gemini text error:", err);
-        const message = formatGeminiError(err);
+        console.error("Groq text error:", err);
+        const message = formatGroqError(err);
         return NextResponse.json(
           { error: message, _apiError: true },
           { status: 502 }

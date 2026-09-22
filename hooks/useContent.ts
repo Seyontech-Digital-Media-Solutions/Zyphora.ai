@@ -1,30 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { MOCK_CONTENT_ITEMS } from "@/lib/mock/data";
+import { createClient } from "@/lib/supabase/client";
 import type { ContentItem, ContentStatus } from "@/types";
-
-function toContentItem(
-  mock: (typeof MOCK_CONTENT_ITEMS)[number]
-): ContentItem {
-  return {
-    id: mock.id,
-    user_id: "mock",
-    title: mock.title,
-    body: mock.body,
-    platform: mock.platform,
-    media_urls: null,
-    status: mock.status as ContentStatus,
-    scheduled_at: mock.scheduled_at ?? null,
-    published_at: mock.published_at ?? null,
-    post_id_external: null,
-    analytics: mock.analytics ?? {},
-    ai_generated: true,
-    tone: null,
-    hashtags: mock.hashtags ?? null,
-    created_at: mock.published_at ?? mock.scheduled_at ?? new Date().toISOString(),
-  };
-}
 
 export function useContent(status?: ContentStatus) {
   const [items, setItems] = useState<ContentItem[]>([]);
@@ -33,11 +11,38 @@ export function useContent(status?: ContentStatus) {
 
   const fetchContent = useCallback(async () => {
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 300));
-    let data = MOCK_CONTENT_ITEMS.map(toContentItem);
-    if (status) data = data.filter((item) => item.status === status);
-    setItems(data);
-    setError(null);
+    const supabase = createClient();
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      setItems([]);
+      setError("Please log in to see your content.");
+      setLoading(false);
+      return;
+    }
+
+    let query = supabase
+      .from("content_items")
+      .select("*")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: false });
+
+    if (status) {
+      query = query.eq("status", status);
+    }
+
+    const { data, error: queryError } = await query;
+
+    if (queryError) {
+      setError(queryError.message);
+      setItems([]);
+    } else {
+      setItems((data ?? []) as ContentItem[]);
+      setError(null);
+    }
     setLoading(false);
   }, [status]);
 
@@ -46,12 +51,32 @@ export function useContent(status?: ContentStatus) {
   }, [fetchContent]);
 
   const updateStatus = async (id: string, newStatus: ContentStatus) => {
+    const supabase = createClient();
+    const { error: updateError } = await supabase
+      .from("content_items")
+      .update({ status: newStatus })
+      .eq("id", id);
+
+    if (updateError) {
+      setError(updateError.message);
+      return;
+    }
     setItems((prev) =>
       prev.map((item) => (item.id === id ? { ...item, status: newStatus } : item))
     );
   };
 
   const deleteItem = async (id: string) => {
+    const supabase = createClient();
+    const { error: deleteError } = await supabase
+      .from("content_items")
+      .delete()
+      .eq("id", id);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
     setItems((prev) => prev.filter((item) => item.id !== id));
   };
 

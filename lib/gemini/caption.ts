@@ -11,14 +11,9 @@ export interface CaptionResult {
   _error?: string;
 }
 
-const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta";
-
-const GEMINI_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-];
+const GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions";
+const GROQ_VISION_MODEL = "qwen/qwen3.6-27b";
+const GROQ_TEXT_MODEL = "llama-3.3-70b-versatile";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -71,11 +66,10 @@ All strings must use straight double quotes. No smart/curly quotes. No literal n
 {"imageDescription":"","caption":"...","hashtags":["tag1","tag2","tag3","tag4","tag5","tag6","tag7","tag8","tag9","tag10"],"platformVersions":{"twitter":"under 280 chars","linkedin":"professional post","instagram":"engaging with emojis"}}`;
 }
 
-// ─── Robust JSON parser ──────────────────────────────────────────────────────
+// ─── Robust JSON parser (unchanged logic, provider-agnostic) ───────────────
 
 function cleanRawText(raw: string): string {
   return raw
-    // Strip markdown fences (```json ... ``` or ``` ... ```)
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```\s*$/i, "")
@@ -83,8 +77,6 @@ function cleanRawText(raw: string): string {
 }
 
 function extractJsonBoundaries(text: string): string | null {
-  // Try to find the first balanced JSON object in the string. This
-  // handles cases where the model emits surrounding text or extra braces.
   const start = text.indexOf("{");
   if (start === -1) return null;
 
@@ -99,17 +91,14 @@ function extractJsonBoundaries(text: string): string | null {
       escape = false;
       continue;
     }
-
     if (ch === "\\") {
       escape = true;
       continue;
     }
-
     if (ch === '"') {
       inString = !inString;
       continue;
     }
-
     if (inString) continue;
 
     if (ch === "{") depth++;
@@ -120,30 +109,20 @@ function extractJsonBoundaries(text: string): string | null {
       }
     }
   }
-
   return null;
 }
 
 function repairJson(raw: string): string {
-  return (
-    raw
-      // Normalize curly/smart quotes to straight quotes
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
-      // Remove control characters except tab/newline/CR
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
-      // Remove trailing commas before } or ]
-      .replace(/,\s*([}\]])/g, "$1")
-      // Replace literal newlines inside strings with \n escape
-      // (basic heuristic: inside double-quoted segments)
-      .replace(/"((?:[^"\\]|\\.)*)"/g, (_match, inner) => {
-        const fixed = inner.replace(/\n/g, "\\n").replace(/\r/g, "");
-        return `"${fixed}"`;
-      })
-      // Convert simple single-quoted strings to double quotes when safe
-      // Example: {'key':'value'} -> {"key":"value"}
-      .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"')
-  );
+  return raw
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    .replace(/,\s*([}\]])/g, "$1")
+    .replace(/"((?:[^"\\]|\\.)*)"/g, (_match, inner) => {
+      const fixed = inner.replace(/\n/g, "\\n").replace(/\r/g, "");
+      return `"${fixed}"`;
+    })
+    .replace(/'([^'\\]*(?:\\.[^'\\]*)*)'/g, '"$1"');
 }
 
 function tryParse(text: string): CaptionResult | null {
@@ -159,7 +138,6 @@ function tryParse(text: string): CaptionResult | null {
 }
 
 function extractFieldsManually(raw: string): Partial<CaptionResult> | null {
-  // Fallback: pull fields out with regex when JSON.parse fails entirely
   const get = (key: string): string => {
     const m = raw.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
     return m ? m[1].replace(/\\n/g, "\n").replace(/\\"/g, '"') : "";
@@ -175,9 +153,8 @@ function extractFieldsManually(raw: string): Partial<CaptionResult> | null {
   };
 
   const caption = get("caption");
-  if (!caption) return null; // nothing useful found
+  if (!caption) return null;
 
-  // Try to pull nested platformVersions if present
   const pvMatch = raw.match(/"platformVersions"\s*:\s*\{([\s\S]*?)\}/);
   const platformVersions = {
     twitter: get("twitter") || "",
@@ -212,7 +189,6 @@ function normalizeHashtag(tag: string): string {
 function sanitizeString(val: unknown): string {
   if (typeof val !== "string") return "";
   const t = val.trim();
-  // Reject if the "caption" is actually a raw JSON blob
   if (t.startsWith("{") && t.includes('"caption"')) return "";
   return t;
 }
@@ -226,31 +202,28 @@ function isNestedJson(val: unknown): val is string {
   );
 }
 
-export function parseGeminiResponse(rawText: string): CaptionResult {
-  // ── Pass 1: clean and attempt direct parse ─────────────────────────────
+export function parseGroqResponse(rawText: string): CaptionResult {
   const cleaned = cleanRawText(rawText);
   const jsonStr = extractJsonBoundaries(cleaned);
 
   if (jsonStr) {
     let result = tryParse(jsonStr);
 
-    // ── Pass 2: repair and retry ─────────────────────────────────────────
     if (!result) {
       const repaired = repairJson(jsonStr);
       result = tryParse(repaired);
     }
 
     if (result) {
-      // Unwrap double-encoded JSON
       if (isNestedJson(result.caption)) {
-        return parseGeminiResponse(result.caption as string);
+        return parseGroqResponse(result.caption as string);
       }
       const tw = result.platformVersions?.twitter;
       const li = result.platformVersions?.linkedin;
       const ig = result.platformVersions?.instagram;
       if (isNestedJson(tw) || isNestedJson(li) || isNestedJson(ig)) {
         const nested = [tw, li, ig].find(isNestedJson) as string;
-        return parseGeminiResponse(nested);
+        return parseGroqResponse(nested);
       }
 
       const caption = sanitizeString(result.caption);
@@ -271,7 +244,6 @@ export function parseGeminiResponse(rawText: string): CaptionResult {
     }
   }
 
-  // ── Pass 3: manual regex extraction ─────────────────────────────────────
   console.warn("[caption] JSON.parse failed — attempting regex extraction");
   const manual = extractFieldsManually(rawText);
   if (manual && manual.caption) {
@@ -284,22 +256,17 @@ export function parseGeminiResponse(rawText: string): CaptionResult {
       caption,
       hashtags: hashtags.length ? hashtags : ["#content", "#socialmedia"],
       platformVersions: {
-        twitter:
-          sanitizeString(manual.platformVersions?.twitter) || caption,
-        linkedin:
-          sanitizeString(manual.platformVersions?.linkedin) || caption,
-        instagram:
-          sanitizeString(manual.platformVersions?.instagram) || caption,
+        twitter: sanitizeString(manual.platformVersions?.twitter) || caption,
+        linkedin: sanitizeString(manual.platformVersions?.linkedin) || caption,
+        instagram: sanitizeString(manual.platformVersions?.instagram) || caption,
       },
     };
   }
 
-  // ── Pass 4: surface raw text rather than a useless error message ─────────
   console.error("[caption] All parse attempts failed. Raw:", rawText);
-  const safeText =
-    rawText.trim().startsWith("{")
-      ? "Could not parse AI response. Please try generating again."
-      : rawText.slice(0, 200);
+  const safeText = rawText.trim().startsWith("{")
+    ? "Could not parse AI response. Please try generating again."
+    : rawText.slice(0, 200);
 
   return {
     imageDescription: "",
@@ -318,16 +285,15 @@ export function parseGeminiResponse(rawText: string): CaptionResult {
 
 export function getFallbackResponse(): CaptionResult {
   return {
-    imageDescription: "No GEMINI_API_KEY configured",
+    imageDescription: "No GROQ_API_KEY configured",
     caption:
-      "[DEMO MODE] Add your free Gemini API key to generate real captions. Get it at aistudio.google.com",
-    hashtags: ["#AddGeminiKey", "#FreeAPIKey", "#AICaption"],
+      "[DEMO MODE] Add your free Groq API key to generate real captions. Get it at console.groq.com/keys",
+    hashtags: ["#AddGroqKey", "#FreeAPIKey", "#AICaption"],
     platformVersions: {
-      twitter:
-        "[DEMO] Add GEMINI_API_KEY to .env.local → real captions here",
+      twitter: "[DEMO] Add GROQ_API_KEY to .env.local → real captions here",
       linkedin:
-        "[DEMO MODE] Add your free Gemini API key to .env.local for real captions.",
-      instagram: "[DEMO] Add GEMINI_API_KEY for real captions 🔑",
+        "[DEMO MODE] Add your free Groq API key to .env.local for real captions.",
+      instagram: "[DEMO] Add GROQ_API_KEY for real captions 🔑",
     },
     _demo: true,
   };
@@ -335,129 +301,99 @@ export function getFallbackResponse(): CaptionResult {
 
 // ─── Core API caller ─────────────────────────────────────────────────────────
 
-type GeminiPart =
-  | { text: string }
-  | { inline_data: { mime_type: string; data: string } };
-
-async function geminiGenerate(
+async function groqGenerate(
   apiKey: string,
-  parts: GeminiPart[]
+  model: string,
+  content: string | Array<Record<string, unknown>>
 ): Promise<string> {
+  const maxRetries = 3;
   let lastError: Error | null = null;
 
-  for (const model of GEMINI_MODELS) {
-    const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(GROQ_BASE, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey.trim()}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "user", content }],
+          temperature: 0.6,
+          max_tokens: 1200,
+        }),
+      });
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const url = `${GEMINI_BASE}/models/${model}:generateContent?key=${encodeURIComponent(
-          apiKey.trim()
-        )}`;
+      const data = await res.json();
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ parts }],
-            generationConfig: {
-              temperature: 0.6,   // lower = more predictable JSON output
-              maxOutputTokens: 1200,
-            },
-          }),
-        });
+      if (!res.ok) {
+        const msg = data?.error?.message ?? JSON.stringify(data);
+        const status = res.status;
 
-        const data = await res.json();
-
-        if (!res.ok) {
-          const msg = data?.error?.message ?? JSON.stringify(data);
-          const status = res.status;
-
-          if ((status === 429 || status === 503) && attempt < maxRetries) {
-            const backoffMs = attempt * 1500;
-            console.warn(
-              `[Gemini] ${model} → ${status}. Retry ${attempt}/${maxRetries - 1} in ${backoffMs}ms…`
-            );
-            await delay(backoffMs);
-            continue;
-          }
-
-          throw new Error(`[${status}] ${msg}`);
+        if ((status === 429 || status === 503) && attempt < maxRetries) {
+          const backoffMs = attempt * 1500;
+          console.warn(
+            `[Groq] ${model} → ${status}. Retry ${attempt}/${maxRetries - 1} in ${backoffMs}ms…`
+          );
+          await delay(backoffMs);
+          continue;
         }
 
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (typeof text === "string" && text.length > 0) {
-          console.log(`[Gemini] ✓ Model: ${model}`);
-          return text;
-        }
-
-        throw new Error("Empty text candidate in Gemini response");
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-
-        if (
-          lastError.message.includes("[404]") ||
-          lastError.message.toLowerCase().includes("not found")
-        ) {
-          console.warn(`[Gemini] Model "${model}" not found — skipping`);
-          break;
-        }
-
-        console.error(
-          `[Gemini] ${model} attempt ${attempt}/${maxRetries}:`,
-          lastError.message
-        );
+        throw new Error(`[${status}] ${msg}`);
       }
+
+      const text = data.choices?.[0]?.message?.content;
+      if (typeof text === "string" && text.length > 0) {
+        console.log(`[Groq] ✓ Model: ${model}`);
+        return text;
+      }
+
+      throw new Error("Empty content in Groq response");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      console.error(`[Groq] ${model} attempt ${attempt}/${maxRetries}:`, lastError.message);
+      if (attempt === maxRetries) break;
     }
   }
 
-  throw lastError ?? new Error("All Gemini models failed");
+  throw lastError ?? new Error("Groq request failed");
 }
 
 // ─── Public API helpers ──────────────────────────────────────────────────────
 
-export async function callGeminiVision(
+export async function callGroqVision(
   apiKey: string,
   base64: string,
   mimeType: string,
   prompt: string
 ): Promise<string> {
-  return geminiGenerate(apiKey, [
-    { inline_data: { mime_type: mimeType, data: base64 } },
-    { text: prompt },
+  return groqGenerate(apiKey, GROQ_VISION_MODEL, [
+    { type: "text", text: prompt },
+    { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
   ]);
 }
 
-export async function callGeminiText(
-  apiKey: string,
-  prompt: string
-): Promise<string> {
-  return geminiGenerate(apiKey, [{ text: prompt }]);
+export async function callGroqText(apiKey: string, prompt: string): Promise<string> {
+  return groqGenerate(apiKey, GROQ_TEXT_MODEL, prompt);
 }
 
 // ─── Error formatter ─────────────────────────────────────────────────────────
 
-export function formatGeminiError(err: unknown): string {
+export function formatGroqError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err);
 
-  if (msg.includes("429") || msg.includes("quota")) {
-    return "Gemini quota exceeded — wait a minute and try again.";
+  if (msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("rate limit")) {
+    return "Groq rate limit hit — wait a minute and try again.";
   }
-  if (
-    msg.includes("503") ||
-    msg.includes("overloaded") ||
-    msg.includes("high demand") ||
-    msg.includes("temporarily")
-  ) {
-    return "Gemini is temporarily overloaded. Please try again in a moment.";
+  if (msg.includes("503") || msg.toLowerCase().includes("overloaded")) {
+    return "Groq is temporarily overloaded. Please try again in a moment.";
   }
-  if (msg.includes("401") || msg.includes("UNAUTHENTICATED")) {
-    return (
-      "Gemini API key rejected. Copy your key fresh from AI Studio " +
-      "(aistudio.google.com). Keys start with AIzaSy..."
-    );
+  if (msg.includes("401") || msg.toLowerCase().includes("invalid api key")) {
+    return "Groq API key rejected. Copy a fresh key from console.groq.com/keys.";
   }
-  if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
-    return "Gemini model not found — retrying with fallback model automatically.";
+  if (msg.includes("404") || msg.toLowerCase().includes("model") && msg.toLowerCase().includes("not found")) {
+    return "Groq model not available — it may have been deprecated. Check console.groq.com/docs/models for current model names.";
   }
   if (msg.includes("Failed to fetch") || msg.includes("NetworkError")) {
     return "Network error — check your internet connection and try again.";
