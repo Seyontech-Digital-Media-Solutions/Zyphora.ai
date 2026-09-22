@@ -4,7 +4,7 @@ import { IntegrationsClient } from "@/components/integrations/integrationClient"
 
 // Platforms with a real OAuth flow wired up (app/api/integrations/<id>).
 // Everything else in MOCK_INTEGRATIONS stays a "coming soon" placeholder.
-const LIVE_PLATFORMS = ["twitter", "linkedin", "instagram"];
+const LIVE_PLATFORMS = ["twitter", "linkedin", "instagram", "facebook"];
 
 export default async function IntegrationsPage() {
   const supabase = await createClient();

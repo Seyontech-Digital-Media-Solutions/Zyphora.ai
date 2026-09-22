@@ -30,6 +30,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   twitter: "Twitter/X",
   linkedin: "LinkedIn",
   instagram: "Instagram",
+  facebook: "Facebook",
 };
 
 export function IntegrationsClient({ items }: { items: IntegrationItem[] }) {

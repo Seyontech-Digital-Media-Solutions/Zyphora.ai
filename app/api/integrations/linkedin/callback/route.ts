@@ -52,9 +52,11 @@ export async function GET(request: NextRequest) {
       headers: { Authorization: `Bearer ${access_token}` },
     });
     let accountName: string | null = null;
+    let memberId: string | null = null;
     if (profileRes.ok) {
       const profileData = await profileRes.json();
       accountName = profileData?.name ?? null;
+      memberId = profileData?.sub ?? null;
     } else {
       console.error("LinkedIn profile fetch failed:", await profileRes.text());
     }
@@ -67,6 +69,7 @@ export async function GET(request: NextRequest) {
           user_id: user.id,
           platform: "linkedin",
           account_name: accountName,
+          platform_account_id: memberId,
           access_token,
           refresh_token: null, // LinkedIn's default token type doesn't issue one
           token_expires_at: expires_in

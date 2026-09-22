@@ -26,57 +26,61 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Step 1: exchange the code for a short-lived access token.
-    const form = new URLSearchParams({
-      client_id: process.env.INSTAGRAM_CLIENT_ID!,
-      client_secret: process.env.INSTAGRAM_CLIENT_SECRET!,
-      grant_type: "authorization_code",
-      redirect_uri: `${APP_URL}/api/integrations/instagram/callback`,
-      code,
-    });
+    // Step 1: exchange code for a short-lived user token (same Facebook app).
+    const redirectUri = `${APP_URL}/api/integrations/instagram/callback`;
+    const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
+    tokenUrl.searchParams.set("client_id", process.env.FACEBOOK_CLIENT_ID!);
+    tokenUrl.searchParams.set("client_secret", process.env.FACEBOOK_CLIENT_SECRET!);
+    tokenUrl.searchParams.set("redirect_uri", redirectUri);
+    tokenUrl.searchParams.set("code", code);
 
-    const shortTokenRes = await fetch("https://api.instagram.com/oauth/access_token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form,
-    });
-
-    if (!shortTokenRes.ok) {
-      const detail = await shortTokenRes.text();
-      console.error("Instagram token exchange failed:", detail);
+    const tokenRes = await fetch(tokenUrl.toString());
+    if (!tokenRes.ok) {
+      console.error("Instagram (FB) token exchange failed:", await tokenRes.text());
       return NextResponse.redirect(`${APP_URL}/integrations?error=instagram_token_exchange`);
     }
+    const tokenData = await tokenRes.json();
+    const userToken: string = tokenData.access_token;
 
-    const shortTokenData = await shortTokenRes.json();
-    const shortLivedToken: string = shortTokenData.access_token;
-
-    // Step 2: upgrade to a long-lived token (~60 days) so we don't have to
-    // re-auth the user every hour.
-    let accessToken = shortLivedToken;
-    let expiresInSeconds = 3600;
-
-    const longTokenRes = await fetch(
-      `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${process.env.INSTAGRAM_CLIENT_SECRET}&access_token=${shortLivedToken}`
+    // Step 2: find a Page this user manages that has a linked Instagram
+    // Business Account — that link is what makes publishing possible.
+    const pagesRes = await fetch(
+      `https://graph.facebook.com/v19.0/me/accounts?access_token=${userToken}`
     );
-    if (longTokenRes.ok) {
-      const longTokenData = await longTokenRes.json();
-      accessToken = longTokenData.access_token;
-      expiresInSeconds = longTokenData.expires_in ?? expiresInSeconds;
-    } else {
-      console.error("Instagram long-lived token upgrade failed:", await longTokenRes.text());
-      // Not fatal — fall back to the short-lived token rather than failing the whole connect.
+    if (!pagesRes.ok) {
+      console.error("Instagram pages fetch failed:", await pagesRes.text());
+      return NextResponse.redirect(`${APP_URL}/integrations?error=instagram_no_pages`);
+    }
+    const pagesData = await pagesRes.json();
+
+    let igAccountId: string | null = null;
+    let pageAccessToken: string | null = null;
+
+    for (const page of pagesData?.data ?? []) {
+      const igRes = await fetch(
+        `https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account&access_token=${page.access_token}`
+      );
+      if (!igRes.ok) continue;
+      const igData = await igRes.json();
+      if (igData.instagram_business_account?.id) {
+        igAccountId = igData.instagram_business_account.id;
+        pageAccessToken = page.access_token;
+        break;
+      }
     }
 
-    // Step 3: fetch the username to show in the UI.
-    const profileRes = await fetch(
-      `https://graph.instagram.com/me?fields=id,username&access_token=${accessToken}`
+    if (!igAccountId || !pageAccessToken) {
+      return NextResponse.redirect(`${APP_URL}/integrations?error=instagram_no_business_account`);
+    }
+
+    // Step 3: fetch the IG username to show in the UI.
+    const igProfileRes = await fetch(
+      `https://graph.facebook.com/v19.0/${igAccountId}?fields=username&access_token=${pageAccessToken}`
     );
     let username: string | null = null;
-    if (profileRes.ok) {
-      const profileData = await profileRes.json();
-      username = profileData?.username ?? null;
-    } else {
-      console.error("Instagram profile fetch failed:", await profileRes.text());
+    if (igProfileRes.ok) {
+      const igProfileData = await igProfileRes.json();
+      username = igProfileData?.username ?? null;
     }
 
     const serviceClient = await createServiceClient();
@@ -87,9 +91,10 @@ export async function GET(request: NextRequest) {
           user_id: user.id,
           platform: "instagram",
           account_name: username ? `@${username}` : null,
-          access_token: accessToken,
-          refresh_token: null, // Instagram uses re-exchange, not a refresh token
-          token_expires_at: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+          platform_account_id: igAccountId,
+          access_token: pageAccessToken,
+          refresh_token: null,
+          token_expires_at: null,
           is_active: true,
         },
         { onConflict: "user_id,platform" }
