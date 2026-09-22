@@ -12,7 +12,7 @@ export interface CaptionResult {
 }
 
 const GROQ_BASE = "https://api.groq.com/openai/v1/chat/completions";
-const GROQ_VISION_MODEL = "qwen/qwen3.6-27b";
+const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
 const GROQ_TEXT_MODEL = "llama-3.3-70b-versatile";
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
