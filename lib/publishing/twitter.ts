@@ -65,7 +65,7 @@ async function uploadVideoChunked(
     appendForm.set("command", "APPEND");
     appendForm.set("media_id", mediaId);
     appendForm.set("segment_index", String(segment));
-    appendForm.set("media", new Blob([chunk]));
+    appendForm.set("media", new Blob([new Uint8Array(chunk)]));
 
     const appendRes = await fetch("https://upload.twitter.com/1.1/media/upload.json", {
       method: "POST",
