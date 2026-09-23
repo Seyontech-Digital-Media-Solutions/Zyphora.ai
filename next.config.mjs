@@ -4,4 +4,4 @@ const nextConfig = {
         ignoreDuringBuilds: true,  // 👈 add this
     },
 }
-module.exports = nextConfig
+export default nextConfig
