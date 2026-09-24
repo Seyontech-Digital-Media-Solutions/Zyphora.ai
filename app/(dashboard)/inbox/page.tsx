@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Sparkles, Download } from "lucide-react";
+import { Send, Sparkles, Download, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { MOCK_CONVERSATIONS } from "@/lib/mock/data";
+import { useConversations } from "@/hooks/useConversations";
+import { toast } from "@/lib/toast";
 
 const QUICK_PROMPTS = [
   "Write a cold email",
@@ -16,49 +17,73 @@ const QUICK_PROMPTS = [
   "Generate post ideas",
 ];
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  tokens?: number;
-}
-
 export default function InboxPage() {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const {
+    conversations,
+    activeId,
+    messages,
+    loadingList,
+    loadingMessages,
+    openConversation,
+    startNewChat,
+    createConversation,
+    saveMessage,
+    appendLocal,
+    deleteConversation,
+  } = useConversations();
+
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [conversations] = useState(MOCK_CONVERSATIONS);
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Keep the newest message in view.
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, sending]);
 
   const send = async (text?: string) => {
-    const content = text ?? input;
-    if (!content.trim() || loading) return;
+    const content = (text ?? input).trim();
+    if (!content || sending) return;
+
     setInput("");
-    const newMessages = [...messages, { role: "user" as const, content }];
-    setMessages(newMessages);
-    setLoading(true);
+    setSending(true);
 
     try {
+      // First message in a brand-new chat creates the conversation row.
+      let conversationId = activeId;
+      if (!conversationId) {
+        conversationId = await createConversation(content);
+        if (!conversationId) {
+          toast("Couldn't start the conversation.", "error");
+          return;
+        }
+      }
+
+      appendLocal({ role: "user", content });
+      await saveMessage(conversationId, "user", content);
+
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify({
+          message: content,
+          history: messages.map((m) => ({ role: m.role, content: m.content })),
+        }),
       });
-
       const data = await res.json();
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: data.content ?? "Sorry, something went wrong.",
-          tokens: Math.ceil((data.content?.length ?? 0) / 4),
-        },
-      ]);
+
+      const reply = data.content ?? "Sorry, something went wrong.";
+      const tokens = data.tokens_used ?? Math.ceil(reply.length / 4);
+
+      appendLocal({ role: "assistant", content: reply, tokens_used: tokens });
+      await saveMessage(conversationId, "assistant", reply, tokens);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Sorry, something went wrong." },
-      ]);
+      appendLocal({
+        role: "assistant",
+        content: "Sorry, something went wrong.",
+      });
     } finally {
-      setLoading(false);
+      setSending(false);
     }
   };
 
@@ -70,26 +95,52 @@ export default function InboxPage() {
     a.href = url;
     a.download = "zyphora-chat.txt";
     a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    await deleteConversation(id);
+    toast("Conversation deleted", "success");
   };
 
   return (
     <div className="flex h-[calc(100vh-4rem)] md:h-screen">
       <aside className="hidden md:flex w-64 flex-col border-r border-border bg-surface">
         <div className="p-4 border-b border-border">
-          <Button className="w-full bg-accent" onClick={() => setMessages([])}>
+          <Button className="w-full bg-accent" onClick={startNewChat}>
             <Sparkles className="h-4 w-4 mr-2" />
             New Chat
           </Button>
         </div>
         <ScrollArea className="flex-1 p-2">
-          {conversations.map((c) => (
-            <button
-              key={c.id}
-              className="w-full text-left px-3 py-2 rounded-lg text-sm hover:bg-muted truncate"
-            >
-              {c.title}
-            </button>
-          ))}
+          {loadingList ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground">Loading…</p>
+          ) : conversations.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-muted-foreground">
+              No conversations yet.
+            </p>
+          ) : (
+            conversations.map((c) => (
+              <div
+                key={c.id}
+                onClick={() => openConversation(c.id)}
+                className={cn(
+                  "group w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm cursor-pointer hover:bg-muted",
+                  activeId === c.id && "bg-muted"
+                )}
+              >
+                <span className="flex-1 truncate">{c.title ?? "Untitled"}</span>
+                <button
+                  onClick={(e) => handleDelete(e, c.id)}
+                  className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400"
+                  aria-label="Delete conversation"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))
+          )}
         </ScrollArea>
       </aside>
 
@@ -105,7 +156,11 @@ export default function InboxPage() {
         </div>
 
         <ScrollArea className="flex-1 p-4">
-          {messages.length === 0 ? (
+          {loadingMessages ? (
+            <p className="text-center text-sm text-muted-foreground py-12">
+              Loading conversation…
+            </p>
+          ) : messages.length === 0 ? (
             <div className="max-w-2xl mx-auto text-center py-12">
               <Sparkles className="h-12 w-12 text-accent mx-auto mb-4" />
               <h2 className="text-xl font-semibold mb-2">How can I help?</h2>
@@ -128,7 +183,7 @@ export default function InboxPage() {
             <div className="max-w-3xl mx-auto space-y-4">
               {messages.map((msg, i) => (
                 <div
-                  key={i}
+                  key={msg.id ?? i}
                   className={cn(
                     "rounded-xl px-4 py-3 max-w-[85%] text-sm",
                     msg.role === "user"
@@ -137,11 +192,19 @@ export default function InboxPage() {
                   )}
                 >
                   <p className="whitespace-pre-wrap">{msg.content}</p>
-                  {msg.tokens && (
-                    <p className="text-xs opacity-60 mt-2">{msg.tokens} tokens</p>
-                  )}
+                  {msg.tokens_used ? (
+                    <p className="text-xs opacity-60 mt-2">
+                      {msg.tokens_used} tokens
+                    </p>
+                  ) : null}
                 </div>
               ))}
+              {sending && (
+                <div className="rounded-xl px-4 py-3 max-w-[85%] text-sm bg-muted">
+                  <p className="text-muted-foreground">Thinking…</p>
+                </div>
+              )}
+              <div ref={scrollRef} />
             </div>
           )}
         </ScrollArea>
@@ -153,9 +216,9 @@ export default function InboxPage() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && send()}
               placeholder="Message Zyphora AI..."
-              disabled={loading}
+              disabled={sending}
             />
-            <Button onClick={() => send()} disabled={loading} className="bg-accent">
+            <Button onClick={() => send()} disabled={sending} className="bg-accent">
               <Send className="h-4 w-4" />
             </Button>
           </div>
