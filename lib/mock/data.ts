@@ -342,11 +342,11 @@ export const MOCK_INTEGRATIONS = [
     icon: "f",
   },
   {
-    id: "tiktok",
-    name: "TikTok",
+    id: "youtube",
+    name: "YouTube",
     category: "social",
     connected: false,
-    icon: "♪",
+    icon: "▶",
   },
   {
     id: "slack",

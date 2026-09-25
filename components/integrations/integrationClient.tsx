@@ -31,6 +31,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   linkedin: "LinkedIn",
   instagram: "Instagram",
   facebook: "Facebook",
+  youtube: "YouTube",
   slack: "Slack",
   notion: "Notion",
   airtable: "Airtable",
