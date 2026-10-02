@@ -14,10 +14,38 @@ import { MOCK_AUTOMATION_TEMPLATES } from "@/lib/mock/n8n";
 import { toast } from "@/lib/toast";
 
 export default function AutomationsPage() {
-  const { automations, loading, toggleActive } = useAutomations();
+  const { automations, loading, toggleActive, deleteAutomation, duplicateAutomation } =
+    useAutomations();
 
   const runAutomation = async (id: string) => {
-    await fetch(`/api/automations/${id}/run`, { method: "POST" });
+    try {
+      const res = await fetch(`/api/automations/${id}/run`, { method: "POST" });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        toast(data.error ?? "Automation run failed", "error");
+        return;
+      }
+      toast(
+        data.demo
+          ? "Ran in demo mode — connect n8n or Zapier in Integrations for real runs"
+          : "Automation ran successfully",
+        "success"
+      );
+    } catch {
+      toast("Couldn't reach the automation runner", "error");
+    }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+    const ok = await deleteAutomation(id);
+    toast(ok ? "Automation deleted" : "Couldn't delete automation", ok ? "success" : "error");
+  };
+
+  const handleDuplicate = async (id: string) => {
+    const copy = await duplicateAutomation(id);
+    toast(copy ? "Duplicated as a new automation" : "Couldn't duplicate automation", copy ? "success" : "error");
   };
 
   return (
@@ -72,10 +100,10 @@ export default function AutomationsPage() {
                 <Button variant="outline" size="sm" onClick={() => runAutomation(auto.id)}>
                   <Play className="h-3 w-3 mr-1" /> Run Now
                 </Button>
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" onClick={() => handleDuplicate(auto.id)}>
                   <Copy className="h-3 w-3" />
                 </Button>
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" onClick={() => handleDelete(auto.id, auto.name)}>
                   <Trash2 className="h-3 w-3 text-danger" />
                 </Button>
               </div>
