@@ -21,7 +21,7 @@ export async function GET() {
     "pages_read_engagement",
   ].join(",");
 
-  const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${process.env.FACEBOOK_CLIENT_ID}&redirect_uri=${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/instagram/callback&scope=${scope}&response_type=code&state=${user.id}`;
+  const authUrl = `https://www.instagram.com/v19.0/dialog/oauth?client_id=${process.env.FACEBOOK_CLIENT_ID}&redirect_uri=${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/instagram/callback&scope=${scope}&response_type=code&state=${user.id}`;
 
   return NextResponse.json({ authUrl });
 }

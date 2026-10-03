@@ -10,7 +10,7 @@ type PublishResult = { externalId: string };
 async function waitUntilReady(containerId: string, accessToken: string) {
   for (let attempt = 0; attempt < 20; attempt++) {
     const res = await fetch(
-      `https://graph.facebook.com/v19.0/${containerId}?fields=status_code&access_token=${accessToken}`
+      `https://graph.instagram.com/v19.0/${containerId}?fields=status_code&access_token=${accessToken}`
     );
     const data = await res.json();
     if (data.status_code === "FINISHED") return;
@@ -43,7 +43,7 @@ export async function publishToInstagram({
     const isVideo = (headRes.headers.get("content-type") ?? "").startsWith("video/");
 
     const containerRes = await fetch(
-      `https://graph.facebook.com/v19.0/${platformAccountId}/media`,
+      `https://graph.instagram.com/v19.0/${platformAccountId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -62,7 +62,7 @@ export async function publishToInstagram({
     await waitUntilReady(containerData.id, accessToken);
 
     const publishRes = await fetch(
-      `https://graph.facebook.com/v19.0/${platformAccountId}/media_publish`,
+      `https://graph.instagram.com/v19.0/${platformAccountId}/media_publish`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,7 +82,7 @@ export async function publishToInstagram({
     const headRes = await fetch(url, { method: "HEAD" });
     const isVideo = (headRes.headers.get("content-type") ?? "").startsWith("video/");
     const childRes = await fetch(
-      `https://graph.facebook.com/v19.0/${platformAccountId}/media`,
+      `https://graph.instagram.com/v19.0/${platformAccountId}/media`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -102,7 +102,7 @@ export async function publishToInstagram({
   }
 
   const carouselRes = await fetch(
-    `https://graph.facebook.com/v19.0/${platformAccountId}/media`,
+    `https://graph.instagram.com/v19.0/${platformAccountId}/media`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -121,7 +121,7 @@ export async function publishToInstagram({
   await waitUntilReady(carouselData.id, accessToken);
 
   const publishRes = await fetch(
-    `https://graph.facebook.com/v19.0/${platformAccountId}/media_publish`,
+    `https://graph.instagram.com/v19.0/${platformAccountId}/media_publish`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

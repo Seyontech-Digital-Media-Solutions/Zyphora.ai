@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   try {
     // Step 1: exchange code for a short-lived user token (same Facebook app).
     const redirectUri = `${APP_URL}/api/integrations/instagram/callback`;
-    const tokenUrl = new URL("https://graph.facebook.com/v19.0/oauth/access_token");
+    const tokenUrl = new URL("https://graph.instagram.com/v19.0/oauth/access_token");
     tokenUrl.searchParams.set("client_id", process.env.FACEBOOK_CLIENT_ID!);
     tokenUrl.searchParams.set("client_secret", process.env.FACEBOOK_CLIENT_SECRET!);
     tokenUrl.searchParams.set("redirect_uri", redirectUri);
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest) {
     // Step 2: find a Page this user manages that has a linked Instagram
     // Business Account — that link is what makes publishing possible.
     const pagesRes = await fetch(
-      `https://graph.facebook.com/v19.0/me/accounts?access_token=${userToken}`
+      `https://graph.instagram.com/v19.0/me/accounts?access_token=${userToken}`
     );
     if (!pagesRes.ok) {
       console.error("Instagram pages fetch failed:", await pagesRes.text());
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
 
     for (const page of pagesData?.data ?? []) {
       const igRes = await fetch(
-        `https://graph.facebook.com/v19.0/${page.id}?fields=instagram_business_account&access_token=${page.access_token}`
+        `https://graph.instagram.com/v19.0/${page.id}?fields=instagram_business_account&access_token=${page.access_token}`
       );
       if (!igRes.ok) continue;
       const igData = await igRes.json();
@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
 
     // Step 3: fetch the IG username to show in the UI.
     const igProfileRes = await fetch(
-      `https://graph.facebook.com/v19.0/${igAccountId}?fields=username&access_token=${pageAccessToken}`
+      `https://graph.instagram.com/v19.0/${igAccountId}?fields=username&access_token=${pageAccessToken}`
     );
     let username: string | null = null;
     if (igProfileRes.ok) {
