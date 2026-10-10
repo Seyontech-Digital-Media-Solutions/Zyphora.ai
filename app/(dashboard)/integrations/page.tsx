@@ -14,6 +14,7 @@ const LIVE_PLATFORMS = [
   "airtable",
   "gmail",
   "hubspot",
+  "youtube",
 ];
 
 export default async function IntegrationsPage() {
