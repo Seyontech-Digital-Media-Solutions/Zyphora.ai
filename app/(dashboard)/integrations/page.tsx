@@ -15,6 +15,7 @@ const LIVE_PLATFORMS = [
   "gmail",
   "hubspot",
   "youtube",
+  "zapier",
 ];
 
 export default async function IntegrationsPage() {

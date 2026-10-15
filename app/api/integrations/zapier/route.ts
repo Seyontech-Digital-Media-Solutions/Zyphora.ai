@@ -1,9 +1,12 @@
-import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { NextResponse } from "next/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { getActiveTokenForUser, revokeAllTokensForUser } from "@/lib/oauth/provider";
 
-// Same model as n8n: Zapier's "Webhooks by Zapier" trigger step gives the
-// user a URL — they paste it here instead of an OAuth login.
-export async function POST(request: NextRequest) {
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
+
+// GET: connection status for the Zapier card — "Connect" here kicks off the
+// standard OAuth consent screen at /oauth/authorize, same shape as your other cards.
+export async function GET() {
   const supabase = await createClient();
   const {
     data: { user },
@@ -13,32 +16,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { webhookUrl } = await request.json();
-  if (!webhookUrl || !webhookUrl.startsWith("https://hooks.zapier.com")) {
-    return NextResponse.json(
-      { error: "Paste a valid Zapier webhook URL (starts with https://hooks.zapier.com)" },
-      { status: 400 }
-    );
-  }
+  const activeToken = await getActiveTokenForUser(user.id);
 
-  const { error } = await supabase.from("connected_accounts").upsert(
-    {
-      user_id: user.id,
-      platform: "zapier",
-      account_name: "Zapier webhook",
-      access_token: null,
-      is_active: true,
-      platform_config: { webhook_url: webhookUrl },
-    },
-    { onConflict: "user_id,platform" }
-  );
+  const authUrl =
+    `${APP_URL}/oauth/authorize` +
+    `?response_type=code` +
+    `&client_id=${process.env.ZAPIER_OAUTH_CLIENT_ID}` +
+    `&redirect_uri=${encodeURIComponent(process.env.ZAPIER_OAUTH_REDIRECT_URI ?? "")}` +
+    `&scope=${encodeURIComponent("posts:write posts:read")}` +
+    `&state=${user.id}`;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  return NextResponse.json({ success: true });
+  return NextResponse.json({
+    connected: !!activeToken,
+    authUrl,
+  });
 }
 
+// DELETE: "Disconnect" — revokes all active OAuth tokens AND flips connected_accounts
+// off, so the Integrations card (which reads connected_accounts) reflects it immediately.
 export async function DELETE() {
   const supabase = await createClient();
   const {
@@ -49,7 +44,10 @@ export async function DELETE() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  await supabase
+  await revokeAllTokensForUser(user.id);
+
+  const serviceClient = await createServiceClient();
+  await serviceClient
     .from("connected_accounts")
     .update({ is_active: false })
     .eq("user_id", user.id)

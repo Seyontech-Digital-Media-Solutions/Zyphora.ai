@@ -37,6 +37,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   airtable: "Airtable",
   gmail: "Gmail",
   hubspot: "HubSpot",
+  zapier: "Zapier",
 };
 
 export function IntegrationsClient({ items }: { items: IntegrationItem[] }) {
