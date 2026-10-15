@@ -4,7 +4,6 @@ import { issueAuthorizationCode, validateClientId, validateRedirectUri } from "@
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
-// Handles the Approve/Deny buttons submitted from /oauth/authorize's consent page.
 export async function POST(request: NextRequest) {
   const form = await request.formData();
   const clientId = form.get("client_id") as string;
@@ -13,7 +12,7 @@ export async function POST(request: NextRequest) {
   const state = (form.get("state") as string) || undefined;
   const decision = form.get("decision") as string;
 
-  if (!validateClientId(clientId) || !validateRedirectUri(redirectUri)) {
+  if (!validateClientId(clientId) || !validateRedirectUri(clientId, redirectUri)) {
     return NextResponse.redirect(`${APP_URL}/oauth/authorize?error=invalid_client`);
   }
 
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.redirect(`${APP_URL}/login`);
   }
 
-  const code = await issueAuthorizationCode({ userId: user.id, redirectUri, scope });
+  const code = await issueAuthorizationCode({ userId: user.id, clientId, redirectUri, scope });
 
   return redirectWithParams({ code, ...(state ? { state } : {}) });
 }

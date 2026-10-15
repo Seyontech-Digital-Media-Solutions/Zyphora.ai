@@ -38,6 +38,7 @@ const PLATFORM_LABELS: Record<string, string> = {
   gmail: "Gmail",
   hubspot: "HubSpot",
   zapier: "Zapier",
+  n8n: "n8n",
 };
 
 export function IntegrationsClient({ items }: { items: IntegrationItem[] }) {

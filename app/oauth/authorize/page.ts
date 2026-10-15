@@ -13,20 +13,19 @@ interface PageProps {
   }>;
 }
 
-// The consent screen a user sees after clicking "Connect" on Zapier's side.
-// Zapier redirects the browser here first: /oauth/authorize?response_type=code&client_id=...&redirect_uri=...&scope=...&state=...
+// The consent screen a user sees after clicking "Connect" on Zapier's or n8n's side.
 export default async function AuthorizePage({ searchParams }: PageProps) {
   const params = await searchParams;
   const { response_type, client_id, redirect_uri, scope, state } = params;
 
   if (response_type !== "code" || !client_id || !redirect_uri) {
-    return ErrorScreen({ message: "Missing or invalid OAuth parameters." });
+    return createElement(ErrorScreen, { message: "Missing or invalid OAuth parameters." });
   }
   if (!validateClientId(client_id)) {
-    return ErrorScreen({ message: "Unknown client." });
+    return createElement(ErrorScreen, { message: "Unknown client." });
   }
-  if (!validateRedirectUri(redirect_uri)) {
-    return ErrorScreen({ message: "Redirect URI is not allow-listed." });
+  if (!validateRedirectUri(client_id, redirect_uri)) {
+    return createElement(ErrorScreen, { message: "Redirect URI is not allow-listed." });
   }
 
   const supabase = await createClient();
@@ -35,7 +34,6 @@ export default async function AuthorizePage({ searchParams }: PageProps) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    // Preserve all the OAuth params through login, then land back here.
     const returnTo = `/oauth/authorize?${new URLSearchParams(params as Record<string, string>).toString()}`;
     redirect(`/login?redirect=${encodeURIComponent(returnTo)}`);
   }
@@ -43,15 +41,15 @@ export default async function AuthorizePage({ searchParams }: PageProps) {
   return createElement(
     "div",
     { style: { maxWidth: 420, margin: "80px auto", fontFamily: "sans-serif", textAlign: "center" } },
-    createElement("h1", { style: { fontSize: 20, marginBottom: 8 } }, "Connect Zapier to Zyphora.ai"),
+    createElement("h1", { style: { fontSize: 20, marginBottom: 8 } }, "Connect to Zyphora.ai"),
     createElement(
       "p",
       { style: { color: "#666", marginBottom: 24 } },
       "Signed in as ",
       createElement("strong", null, user.email),
-      ". Zapier is requesting access to your Zyphora.ai account",
+      ". An external app is requesting access to your Zyphora.ai account",
       scope ? ` (${scope})` : "",
-      "."
+      ".",
     ),
     createElement(
       "form",
@@ -72,7 +70,7 @@ export default async function AuthorizePage({ searchParams }: PageProps) {
           value: "deny",
           style: { padding: "10px 20px", borderRadius: 8, border: "1px solid #ccc", background: "white" },
         },
-        "Deny"
+        "Deny",
       ),
       createElement(
         "button",
@@ -82,9 +80,9 @@ export default async function AuthorizePage({ searchParams }: PageProps) {
           value: "approve",
           style: { padding: "10px 20px", borderRadius: 8, border: "none", background: "#6b4cff", color: "white" },
         },
-        "Approve"
-      )
-    )
+        "Approve",
+      ),
+    ),
   );
 }
 
@@ -93,6 +91,6 @@ function ErrorScreen({ message }: { message: string }) {
     "div",
     { style: { maxWidth: 420, margin: "80px auto", fontFamily: "sans-serif", textAlign: "center", color: "#c00" } },
     createElement("h1", { style: { fontSize: 18 } }, "Connection error"),
-    createElement("p", null, message)
+    createElement("p", null, message),
   );
 }

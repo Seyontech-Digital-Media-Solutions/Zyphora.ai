@@ -4,8 +4,6 @@ import { getActiveTokenForUser, revokeAllTokensForUser } from "@/lib/oauth/provi
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL;
 
-// GET: connection status for the Zapier card — "Connect" here kicks off the
-// standard OAuth consent screen at /oauth/authorize, same shape as your other cards.
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -16,7 +14,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const activeToken = await getActiveTokenForUser(user.id);
+  const activeToken = await getActiveTokenForUser(user.id, "zapier");
 
   const authUrl =
     `${APP_URL}/oauth/authorize` +
@@ -32,8 +30,6 @@ export async function GET() {
   });
 }
 
-// DELETE: "Disconnect" — revokes all active OAuth tokens AND flips connected_accounts
-// off, so the Integrations card (which reads connected_accounts) reflects it immediately.
 export async function DELETE() {
   const supabase = await createClient();
   const {
@@ -44,7 +40,7 @@ export async function DELETE() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  await revokeAllTokensForUser(user.id);
+  await revokeAllTokensForUser(user.id, "zapier");
 
   const serviceClient = await createServiceClient();
   await serviceClient

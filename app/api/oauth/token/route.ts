@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { exchangeAuthorizationCode, exchangeRefreshToken } from "@/lib/oauth/provider";
+import { exchangeAuthorizationCode, exchangeRefreshToken, verifyAccessToken } from "@/lib/oauth/provider";
 import { createServiceClient } from "@/lib/supabase/server";
 
-// Standard OAuth2 token endpoint. Zapier calls this twice: once right after
-// the user approves (grant_type=authorization_code), and later automatically
-// whenever the access token expires (grant_type=refresh_token).
+// Shared OAuth2 token endpoint for every external client (Zapier, n8n, ...).
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") ?? "";
   let params: Record<string, string>;
@@ -16,7 +14,6 @@ export async function POST(request: NextRequest) {
     params = Object.fromEntries(form.entries()) as Record<string, string>;
   }
 
-  // Some OAuth clients send client_id/secret via HTTP Basic auth instead of the body.
   const authHeader = request.headers.get("authorization");
   if (authHeader?.startsWith("Basic ")) {
     const decoded = Buffer.from(authHeader.slice(6), "base64").toString("utf-8");
@@ -34,13 +31,13 @@ export async function POST(request: NextRequest) {
         redirectUri: params.redirect_uri,
       });
 
-      // Mirror the connection into connected_accounts so your Integrations
-      // page (which only reads that table) shows Zapier as "Connected" too.
-      // We decode the userId straight out of the access token we just issued
-      // instead of re-verifying, since we just created it ourselves above.
-      await markZapierConnected(tokens.access_token);
+      // Mirror the connection into connected_accounts so the Integrations
+      // page (which reads that table) shows the right platform as Connected.
+      await markPlatformConnected(tokens.access_token, tokens.platform);
 
-      return NextResponse.json(tokens);
+      const { platform, ...publicTokens } = tokens;
+      void platform;
+      return NextResponse.json(publicTokens);
     }
 
     if (params.grant_type === "refresh_token") {
@@ -49,7 +46,9 @@ export async function POST(request: NextRequest) {
         clientId: params.client_id,
         clientSecret: params.client_secret,
       });
-      return NextResponse.json(tokens);
+      const { platform, ...publicTokens } = tokens;
+      void platform;
+      return NextResponse.json(publicTokens);
     }
 
     return NextResponse.json({ error: "unsupported_grant_type" }, { status: 400 });
@@ -60,8 +59,12 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function markZapierConnected(accessToken: string) {
-  const { verifyAccessToken } = await import("@/lib/oauth/provider");
+const PLATFORM_LABELS: Record<string, string> = {
+  zapier: "Zapier",
+  n8n: "n8n",
+};
+
+async function markPlatformConnected(accessToken: string, platform: string) {
   const verified = await verifyAccessToken(accessToken);
   if (!verified) return;
 
@@ -69,8 +72,8 @@ async function markZapierConnected(accessToken: string) {
   await serviceClient.from("connected_accounts").upsert(
     {
       user_id: verified.userId,
-      platform: "zapier",
-      account_name: "Zapier",
+      platform,
+      account_name: PLATFORM_LABELS[platform] ?? platform,
       is_active: true,
     },
     { onConflict: "user_id,platform" }

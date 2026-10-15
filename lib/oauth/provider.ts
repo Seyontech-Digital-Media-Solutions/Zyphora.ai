@@ -3,7 +3,6 @@ import { createServiceClient } from "@/lib/supabase/server";
 
 const CODE_TTL_MS = 10 * 60 * 1000; // authorization codes expire in 10 minutes
 const ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000; // access tokens last 1 hour
-// refresh tokens don't expire here — revoke via Disconnect instead; add an expiry later if you want one
 
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -13,31 +12,77 @@ function randomToken(prefix: string): string {
   return `${prefix}${randomBytes(32).toString("hex")}`;
 }
 
-// ---------- The one static client (Zapier) — validated against env vars, not a DB row ----------
+// ---------- Registered OAuth clients (Zapier, n8n, any future one) ----------
+// Each is a static credential pair from env vars, same pattern as your other
+// platforms' Client ID/Secret — not a DB row, so the secret can be shown
+// once at setup time without needing to be re-decryptable later.
+
+interface OAuthClientConfig {
+  platform: string; // matches connected_accounts.platform
+  clientId: string;
+  clientSecret: string;
+  redirectUris: string[];
+}
+
+function getClients(): OAuthClientConfig[] {
+  const clients: OAuthClientConfig[] = [];
+
+  if (process.env.ZAPIER_OAUTH_CLIENT_ID) {
+    clients.push({
+      platform: "zapier",
+      clientId: process.env.ZAPIER_OAUTH_CLIENT_ID,
+      clientSecret: process.env.ZAPIER_OAUTH_CLIENT_SECRET ?? "",
+      redirectUris: (process.env.ZAPIER_OAUTH_REDIRECT_URI ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+  }
+
+  if (process.env.N8N_OAUTH_CLIENT_ID) {
+    clients.push({
+      platform: "n8n",
+      clientId: process.env.N8N_OAUTH_CLIENT_ID,
+      clientSecret: process.env.N8N_OAUTH_CLIENT_SECRET ?? "",
+      redirectUris: (process.env.N8N_OAUTH_REDIRECT_URI ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean),
+    });
+  }
+
+  return clients;
+}
+
+export function getClientByClientId(clientId: string): OAuthClientConfig | undefined {
+  return getClients().find((c) => c.clientId === clientId);
+}
 
 export function validateClientId(clientId: string): boolean {
-  return clientId === process.env.ZAPIER_OAUTH_CLIENT_ID;
+  return !!getClientByClientId(clientId);
 }
 
-export function validateClientSecret(clientSecret: string): boolean {
-  return clientSecret === process.env.ZAPIER_OAUTH_CLIENT_SECRET;
+export function validateClientSecret(clientId: string, clientSecret: string): boolean {
+  const client = getClientByClientId(clientId);
+  return !!client && client.clientSecret === clientSecret;
 }
 
-export function validateRedirectUri(redirectUri: string): boolean {
-  // Zapier gives you one fixed callback URL when you create the OAuth2 connection
-  // in "API by Zapier" (shown on their setup page, looks like:
-  // https://zapier.com/dashboard/auth/oauth/return/App235435CLIAPI/ )
-  const allowed = (process.env.ZAPIER_OAUTH_REDIRECT_URI ?? "").split(",").map((s) => s.trim());
-  return allowed.includes(redirectUri);
+export function validateRedirectUri(clientId: string, redirectUri: string): boolean {
+  const client = getClientByClientId(clientId);
+  return !!client && client.redirectUris.includes(redirectUri);
 }
 
 // ---------- Authorization code flow ----------
 
 export async function issueAuthorizationCode(params: {
   userId: string;
+  clientId: string;
   redirectUri: string;
   scope?: string;
 }) {
+  const client = getClientByClientId(params.clientId);
+  if (!client) throw new Error("invalid_client");
+
   const code = randomToken("zyph_code_");
   const serviceClient = await createServiceClient();
 
@@ -46,6 +91,7 @@ export async function issueAuthorizationCode(params: {
     user_id: params.userId,
     redirect_uri: params.redirectUri,
     scope: params.scope ?? null,
+    platform: client.platform,
     expires_at: new Date(Date.now() + CODE_TTL_MS).toISOString(),
   });
 
@@ -59,7 +105,7 @@ export async function exchangeAuthorizationCode(params: {
   clientSecret: string;
   redirectUri: string;
 }) {
-  if (!validateClientId(params.clientId) || !validateClientSecret(params.clientSecret)) {
+  if (!validateClientId(params.clientId) || !validateClientSecret(params.clientId, params.clientSecret)) {
     throw new Error("invalid_client");
   }
 
@@ -84,7 +130,7 @@ export async function exchangeAuthorizationCode(params: {
     .update({ used_at: new Date().toISOString() })
     .eq("code", params.code);
 
-  return issueTokenPair({ userId: codeRow.user_id, scope: codeRow.scope });
+  return issueTokenPair({ userId: codeRow.user_id, scope: codeRow.scope, platform: codeRow.platform });
 }
 
 export async function exchangeRefreshToken(params: {
@@ -92,7 +138,7 @@ export async function exchangeRefreshToken(params: {
   clientId: string;
   clientSecret: string;
 }) {
-  if (!validateClientId(params.clientId) || !validateClientSecret(params.clientSecret)) {
+  if (!validateClientId(params.clientId) || !validateClientSecret(params.clientId, params.clientSecret)) {
     throw new Error("invalid_client");
   }
 
@@ -107,16 +153,15 @@ export async function exchangeRefreshToken(params: {
 
   if (!tokenRow || tokenRow.revoked_at) throw new Error("invalid_grant");
 
-  // Revoke the old pair and issue a fresh one (rotation).
   await serviceClient
     .from("oauth_access_tokens")
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", tokenRow.id);
 
-  return issueTokenPair({ userId: tokenRow.user_id, scope: tokenRow.scope });
+  return issueTokenPair({ userId: tokenRow.user_id, scope: tokenRow.scope, platform: tokenRow.platform });
 }
 
-async function issueTokenPair(params: { userId: string; scope: string | null }) {
+async function issueTokenPair(params: { userId: string; scope: string | null; platform: string }) {
   const accessToken = randomToken("zyph_at_");
   const refreshToken = randomToken("zyph_rt_");
   const expiresAt = new Date(Date.now() + ACCESS_TOKEN_TTL_MS);
@@ -127,6 +172,7 @@ async function issueTokenPair(params: { userId: string; scope: string | null }) 
     refresh_token_hash: hash(refreshToken),
     user_id: params.userId,
     scope: params.scope,
+    platform: params.platform,
     expires_at: expiresAt.toISOString(),
   });
 
@@ -138,16 +184,17 @@ async function issueTokenPair(params: { userId: string; scope: string | null }) 
     token_type: "bearer",
     expires_in: Math.floor(ACCESS_TOKEN_TTL_MS / 1000),
     scope: params.scope ?? undefined,
+    platform: params.platform,
   };
 }
 
-// ---------- Verifying an incoming access token (used by /api/v1/auth/test and future endpoints) ----------
+// ---------- Verifying an incoming access token ----------
 
 export async function verifyAccessToken(accessToken: string) {
   const serviceClient = await createServiceClient();
   const { data } = await serviceClient
     .from("oauth_access_tokens")
-    .select("user_id, scope, expires_at, revoked_at")
+    .select("user_id, scope, platform, expires_at, revoked_at")
     .eq("access_token_hash", hash(accessToken))
     .single();
 
@@ -155,17 +202,18 @@ export async function verifyAccessToken(accessToken: string) {
     return null;
   }
 
-  return { userId: data.user_id, scope: data.scope };
+  return { userId: data.user_id, scope: data.scope, platform: data.platform };
 }
 
-// ---------- For the Integrations card: does this user currently have an active connection? ----------
+// ---------- For an Integrations card: does this user have an active connection for THIS platform? ----------
 
-export async function getActiveTokenForUser(userId: string) {
+export async function getActiveTokenForUser(userId: string, platform: string) {
   const serviceClient = await createServiceClient();
   const { data } = await serviceClient
     .from("oauth_access_tokens")
     .select("id, created_at, expires_at, revoked_at")
     .eq("user_id", userId)
+    .eq("platform", platform)
     .is("revoked_at", null)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -174,11 +222,12 @@ export async function getActiveTokenForUser(userId: string) {
   return data ?? null;
 }
 
-export async function revokeAllTokensForUser(userId: string) {
+export async function revokeAllTokensForUser(userId: string, platform: string) {
   const serviceClient = await createServiceClient();
   await serviceClient
     .from("oauth_access_tokens")
     .update({ revoked_at: new Date().toISOString() })
     .eq("user_id", userId)
+    .eq("platform", platform)
     .is("revoked_at", null);
 }

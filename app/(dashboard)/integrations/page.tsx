@@ -16,6 +16,7 @@ const LIVE_PLATFORMS = [
   "hubspot",
   "youtube",
   "zapier",
+  "n8n",
 ];
 
 export default async function IntegrationsPage() {
