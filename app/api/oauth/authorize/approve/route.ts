@@ -13,13 +13,13 @@ export async function POST(request: NextRequest) {
   const decision = form.get("decision") as string;
 
   if (!validateClientId(clientId) || !validateRedirectUri(clientId, redirectUri)) {
-    return NextResponse.redirect(`${APP_URL}/oauth/authorize?error=invalid_client`);
+    return NextResponse.redirect(`${APP_URL}/oauth/authorize?error=invalid_client`, 302);
   }
 
   const redirectWithParams = (params: Record<string, string>) => {
     const url = new URL(redirectUri);
     Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, value));
-    return NextResponse.redirect(url.toString());
+    return NextResponse.redirect(url.toString(), 302);
   };
 
   if (decision !== "approve") {
@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.redirect(`${APP_URL}/login`);
+    return NextResponse.redirect(`${APP_URL}/login`, 302);
   }
 
   const code = await issueAuthorizationCode({ userId: user.id, clientId, redirectUri, scope });
