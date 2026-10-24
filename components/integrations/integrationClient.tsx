@@ -23,6 +23,7 @@ type IntegrationItem = {
   connected: boolean;
   icon: string;
   accountName: string | null;
+  tokenExpiresAt?: string | null;
   live: boolean;
 };
 
@@ -140,8 +141,21 @@ export function IntegrationsClient({ items }: { items: IntegrationItem[] }) {
                   </Badge>
                 </div>
                 {item.connected && item.accountName ? (
-                  <p className="text-xs text-muted-foreground mb-3">{item.accountName}</p>
+                  <p className="text-xs text-muted-foreground mb-1">{item.accountName}</p>
                 ) : null}
+                {item.connected && item.tokenExpiresAt ? (() => {
+                  const daysLeft = Math.ceil(
+                    (new Date(item.tokenExpiresAt).getTime() - Date.now()) / 86400000);
+                    return (
+                    <p className={`text-xs mb-3 ${daysLeft <= 7 ? "text-red-400" : "text-muted-foreground"}`}>
+                      {daysLeft <= 0
+                      ? "Token expired. Disconnect and reconnect."
+                      : daysLeft <= 7
+                      ? `Token expires in ${daysLeft} day${daysLeft === 1 ? "" : "s"}. Reconnect soon.`
+                      : `Token expires in ${daysLeft} days`}
+                      </p>
+                      );
+                })() : null}
                 <Button
                   variant={item.connected ? "outline" : "default"}
                   className={!item.connected ? "w-full bg-accent" : "w-full"}

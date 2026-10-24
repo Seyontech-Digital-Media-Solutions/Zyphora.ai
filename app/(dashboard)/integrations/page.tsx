@@ -27,19 +27,24 @@ export default async function IntegrationsPage() {
 
   const connectedByPlatform = new Map<
     string,
-    { account_name: string | null; is_active: boolean }
+    {
+      account_name: string | null;
+      is_active: boolean;
+      token_expires_at: string | null;
+    }
   >();
 
   if (user) {
     const { data: rows } = await supabase
       .from("connected_accounts")
-      .select("platform, account_name, is_active")
+      .select("platform, account_name, is_active, token_expires_at")
       .eq("user_id", user.id);
 
     rows?.forEach((row) => {
       connectedByPlatform.set(row.platform, {
         account_name: row.account_name,
         is_active: row.is_active,
+        token_expires_at: row.token_expires_at,
       });
     });
   }
@@ -52,6 +57,7 @@ export default async function IntegrationsPage() {
         ...item,
         connected,
         accountName: connected ? row?.account_name ?? null : null,
+        tokenExpiresAt: connected ? row?.token_expires_at ?? null : null,
         live: true as const,
       };
     }
@@ -59,6 +65,7 @@ export default async function IntegrationsPage() {
     return {
       ...item,
       accountName: item.connected ? `@user_${item.id}` : null,
+      tokenExpiresAt: null,
       live: false as const,
     };
   });
